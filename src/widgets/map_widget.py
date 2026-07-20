@@ -9,12 +9,17 @@ from PySide6.QtCore import (
     QTimer,
 )
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QFont,
     QPainter,
+    QPainterPath,
     QPen,
+    QLinearGradient,
+    QRadialGradient,
+    QPolygonF
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QWidget, QGraphicsDropShadowEffect
 
 from database.database import (
     get_pothole_by_id,
@@ -24,6 +29,8 @@ from utils import data
 from widgets.pothole_details_dialog import (
     PotholeDetailsDialog,
 )
+from utils.theme import ThemeManager
+from utils.animator import GlobalAnimator
 
 
 class MapWidget(QWidget):
@@ -34,6 +41,7 @@ class MapWidget(QWidget):
 
         # Show a pointing cursor over clickable potholes.
         self.setMouseTracking(True)
+        self.theme_manager = ThemeManager()
 
         self.blink = False
         self.trail_points = []
@@ -59,7 +67,34 @@ class MapWidget(QWidget):
         self.blink_timer.timeout.connect(
             self.toggle_blink
         )
-        self.blink_timer.start(350)
+        self.blink_timer.start(500)
+        
+        self.animator = GlobalAnimator()
+        self.current_time = 0.0
+        self.animator.tick.connect(self.on_animator_tick)
+
+        # Motion trail for car
+        self.car_trail_positions = []
+        
+        self.theme_manager.theme_changed.connect(self.apply_theme)
+        self.apply_theme(self.theme_manager.get_current_theme(), self.theme_manager.is_dark)
+
+    def on_animator_tick(self, timestamp):
+        self.current_time = timestamp
+        self.update()
+
+    def apply_theme(self, theme, is_dark):
+        self.theme = theme
+        self.is_dark = is_dark
+        if is_dark:
+            self.setGraphicsEffect(None)
+        else:
+            shadow = QGraphicsDropShadowEffect()
+            shadow.setBlurRadius(10)
+            shadow.setColor(QColor(0, 0, 0, 20))
+            shadow.setOffset(0, 1)
+            self.setGraphicsEffect(shadow)
+        self.update()
 
     def toggle_blink(self):
         self.blink = not self.blink
@@ -402,6 +437,10 @@ class MapWidget(QWidget):
         painter.setRenderHint(
             QPainter.Antialiasing
         )
+        
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), 14, 14)
+        painter.setClipPath(path)
 
         self.draw_background(painter)
         self.draw_road_shadow(painter)
@@ -411,59 +450,37 @@ class MapWidget(QWidget):
         self.draw_all_potholes(painter)
         self.draw_labels(painter)
         self.draw_vehicle(painter)
+        
+        if getattr(self, "is_dark", True) and hasattr(self, "theme"):
+            painter.setClipping(False)
+            painter.setBrush(Qt.NoBrush)
+            painter.setPen(QPen(QColor(self.theme['border']), 2))
+            painter.drawRoundedRect(self.rect().adjusted(1,1,-1,-1), 14, 14)
 
     def draw_background(self, painter):
-        painter.fillRect(
-            self.rect(),
-            QColor("#0b0f14"),
-        )
+        is_dark = getattr(self, "is_dark", True)
+        # 1. Map canvas background (card surface)
+        bg_color = QColor("#1a1d27") if is_dark else QColor("#e8e8ed")
+        painter.fillRect(self.rect(), bg_color)
+        
+        # 2. Grass / roadside area (subtle depth gradient)
+        grass_start = QColor("#183020") if is_dark else QColor("#a8c8a8")
+        grass_end = QColor("#1e3a1e") if is_dark else QColor("#b8d4b8")
+        
+        grass_grad = QLinearGradient(0, 0, self.width(), self.height())
+        grass_grad.setColorAt(0, grass_start)
+        grass_grad.setColorAt(1, grass_end)
+        painter.fillRect(self.rect().adjusted(10, 10, -10, -10), grass_grad)
 
-        painter.setPen(
-            QPen(
-                QColor("#151b22"),
-                1,
-            )
-        )
+        # Optional: Grid overlay (hologram terrain feel)
+        grid_color = QColor(255, 255, 255, 15) if is_dark else QColor(0, 0, 0, 15)
+        painter.setPen(QPen(grid_color, 1, Qt.DotLine))
 
-        grid_size = 90
-
-        for x in range(
-            0,
-            self.width(),
-            grid_size,
-        ):
-            painter.drawLine(
-                x,
-                0,
-                x,
-                self.height(),
-            )
-
-        for y in range(
-            0,
-            self.height(),
-            grid_size,
-        ):
-            painter.drawLine(
-                0,
-                y,
-                self.width(),
-                y,
-            )
-
-        painter.setPen(
-            QPen(
-                QColor("#263241"),
-                2,
-            )
-        )
-
-        painter.drawRect(
-            1,
-            1,
-            self.width() - 2,
-            self.height() - 2,
-        )
+        grid_spacing = 40
+        for x in range(0, self.width(), grid_spacing):
+            painter.drawLine(x, 0, x, self.height())
+        for y in range(0, self.height(), grid_spacing):
+            painter.drawLine(0, y, self.width(), y)
 
     def draw_road_shadow(self, painter):
         painter.setPen(
@@ -497,80 +514,65 @@ class MapWidget(QWidget):
             self.bottom - self.top,
         )
 
-        painter.setPen(
-            QPen(
-                QColor("#7a7f85"),
-                46,
-            )
-        )
+        is_dark = getattr(self, "is_dark", True)
+        road_edge = QColor("#555555") if is_dark else QColor("#48484a")
+        
+        # Faint blue glow around road edges
+        glow_color = QColor(59, 130, 246, 40) if is_dark else QColor(0, 122, 255, 30)
+        painter.setPen(QPen(glow_color, 54))
+        painter.drawRoundedRect(road_rect, 25, 25)
 
-        painter.drawRoundedRect(
-            road_rect,
-            25,
-            25,
-        )
+        painter.setPen(QPen(road_edge, 46))
+        painter.drawRoundedRect(road_rect, 25, 25)
 
-        painter.setPen(
-            QPen(
-                QColor("#2c3238"),
-                34,
-            )
-        )
+        # Linear gradient along the road width
+        # Lighter center, darker edges
+        road_grad = QLinearGradient(road_rect.left(), road_rect.top(), road_rect.right(), road_rect.bottom())
+        center_c = QColor("#4a4a4c") if is_dark else QColor("#7e7e83")
+        edge_c = QColor("#3a3a3c") if is_dark else QColor("#6e6e73")
+        road_grad.setColorAt(0, edge_c)
+        road_grad.setColorAt(0.5, center_c)
+        road_grad.setColorAt(1, edge_c)
 
-        painter.drawRoundedRect(
-            road_rect,
-            22,
-            22,
-        )
-
-        painter.setPen(
-            QPen(
-                QColor("#111820"),
-                2,
-            )
-        )
-
-        painter.drawRoundedRect(
-            road_rect,
-            22,
-            22,
-        )
+        painter.setPen(QPen(road_grad, 34))
+        painter.drawRoundedRect(road_rect, 22, 22)
 
     def draw_lane_markings(self, painter):
         painter.setPen(
             QPen(
-                QColor("#f7d477"),
+                QColor("#ffffff"),
+                3,
+                Qt.SolidLine,
+            )
+        )
+        painter.drawRoundedRect(
+            QRectF(
+                self.left + 8,
+                self.top + 8,
+                self.right - self.left - 16,
+                self.bottom - self.top - 16,
+            ),
+            18,
+            18,
+        )
+        
+        painter.setPen(
+            QPen(
+                QColor("#f5c542"),
                 3,
                 Qt.DashLine,
             )
         )
 
-        painter.drawLine(
-            self.left + 60,
-            self.top,
-            self.right - 60,
-            self.top,
-        )
-
-        painter.drawLine(
-            self.right,
-            self.top + 55,
-            self.right,
-            self.bottom - 55,
-        )
-
-        painter.drawLine(
-            self.left + 60,
-            self.bottom,
-            self.right - 60,
-            self.bottom,
-        )
-
-        painter.drawLine(
-            self.left,
-            self.top + 55,
-            self.left,
-            self.bottom - 55,
+        painter.drawRoundedRect(
+            QRectF(
+                self.left + 30,
+                self.top + 30,
+                self.right - self.left - 60,
+                self.bottom - self.top - 60,
+            ),
+            10,
+            10,
         )
 
     def draw_gps_trail(self, painter):
@@ -661,64 +663,23 @@ class MapWidget(QWidget):
                 )
             )
 
-        if pothole["severity"] == "HIGH":
-            crack_color = QColor("#ff3333")
-        else:
-            crack_color = QColor("#ffcc00")
+        is_dark = getattr(self, "is_dark", True)
+        pothole_fill = QColor("#ff3b30")
+        pothole_border = QColor("#ff6b6b") if is_dark else QColor("#cc0000")
 
-        painter.setBrush(
-            QColor("#090909")
-        )
+        pulse = self.animator.get_sine_value(self.current_time, 0.8, 0, 2)
+        
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 59, 48, 40))
+        h_rad = 50 + pulse * 2
+        painter.drawEllipse(QRectF(x - h_rad/2, y - h_rad/2 + 5, h_rad, h_rad * 0.6))
 
-        painter.drawEllipse(
-            QRectF(
-                x - 30,
-                y - 17,
-                60,
-                34,
-            )
-        )
+        painter.setBrush(pothole_fill)
+        painter.setPen(QPen(pothole_border, 2))
 
-        painter.setBrush(
-            QColor("#1f1f1f")
-        )
-
-        painter.drawEllipse(
-            QRectF(
-                x - 22,
-                y - 10,
-                44,
-                20,
-            )
-        )
-
-        painter.setPen(
-            QPen(
-                crack_color,
-                2,
-            )
-        )
-
-        painter.drawLine(
-            x - 26,
-            y,
-            x - 42,
-            y - 15,
-        )
-
-        painter.drawLine(
-            x + 22,
-            y - 2,
-            x + 42,
-            y - 14,
-        )
-
-        painter.drawLine(
-            x - 12,
-            y + 13,
-            x - 30,
-            y + 26,
-        )
+        w = 34 + pulse
+        h = 20 + pulse
+        painter.drawEllipse(QRectF(x - w/2, y - h/2, w, h))
 
         painter.setFont(
             QFont(
@@ -807,225 +768,98 @@ class MapWidget(QWidget):
             )
 
     def draw_labels(self, painter):
-        painter.setFont(
-            QFont(
-                "Arial",
-                10,
-                QFont.Bold,
-            )
-        )
+        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        is_dark = getattr(self, "is_dark", True)
+        
+        # Start and End Labels
+        text_color = QColor("#e0e0e0") if is_dark else QColor("#1d1d1f")
+        painter.setPen(QPen(text_color, 2))
+        painter.drawText(self.left - 5, self.top - 28, "START")
+        painter.drawText(self.right - 75, self.bottom + 38, "END")
 
-        painter.setPen(
-            QPen(
-                QColor("#ffffff"),
-                2,
-            )
-        )
-
-        painter.drawText(
-            self.left - 5,
-            self.top - 28,
-            "START",
-        )
-
-        painter.drawText(
-            self.right - 75,
-            self.bottom + 38,
-            "END",
-        )
-
-        painter.setFont(
-            QFont(
-                "Arial",
-                9,
-            )
-        )
-
-        painter.setPen(
-            QPen(
-                QColor("#00d26a"),
-                1,
-            )
-        )
-
-        painter.drawText(
-            20,
-            self.height() - 20,
-            (
-                "Digital Twin Simulation Active "
-                "• Click a pothole for details"
-            ),
-        )
+        # Map Title (Top Left)
+        painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+        muted_color = QColor(150, 150, 150)
+        painter.setPen(QPen(muted_color))
+        painter.drawText(35, 30, "DIGITAL TWIN — LIVE")
+        
+        # Blinking dot next to title
+        pulse = self.animator.get_sine_value(self.current_time, 1.5, 50, 255)
+        painter.setBrush(QColor(16, 185, 129, int(pulse))) # Emerald Green
+        painter.setPen(Qt.NoPen)
+        painter.drawEllipse(QRectF(18, 20, 10, 10))
 
     def draw_vehicle(self, painter):
+        import math
         x = data.car_x
         y = data.car_y
+        
+        if not self.car_trail_positions or self.car_trail_positions[-1] != (x, y):
+            self.car_trail_positions.append((x, y))
+            if len(self.car_trail_positions) > 10:
+                self.car_trail_positions.pop(0)
+
+        # Calculate angle
+        self.car_angle = getattr(self, "car_angle", 0)
+        if len(self.car_trail_positions) > 1:
+            px, py = self.car_trail_positions[-2]
+            dx = x - px
+            dy = y - py
+            if dx != 0 or dy != 0:
+                self.car_angle = math.degrees(math.atan2(dy, dx))
 
         painter.save()
-
-        painter.translate(
-            x + 14,
-            y + 14,
-        )
-
-        if data.direction == "RIGHT":
-            painter.rotate(90)
-
-        elif data.direction == "DOWN":
-            painter.rotate(180)
-
-        elif data.direction == "LEFT":
-            painter.rotate(270)
-
-        painter.setBrush(
-            QColor(
-                0,
-                210,
-                106,
-                75,
-            )
-        )
-
+        
+        trail_color = QColor(59, 130, 246)
         painter.setPen(Qt.NoPen)
+        for i, (tx, ty) in enumerate(self.car_trail_positions):
+            opacity = int(255 * (i / 10.0))
+            if opacity > 0:
+                trail_color.setAlpha(opacity)
+                painter.setBrush(trail_color)
+                painter.drawEllipse(QRectF(tx + 9, ty + 9, 10, 10))
 
-        painter.drawEllipse(
-            QRectF(
-                -22,
-                -22,
-                44,
-                44,
-            )
-        )
+        painter.translate(x + 14, y + 14)
+        painter.rotate(self.car_angle)
 
-        painter.setBrush(
-            QColor("#111111")
-        )
+        is_dark = getattr(self, "is_dark", True)
+        
+        # Halo glow (behind car)
+        pulse_alpha = int(self.animator.get_sine_value(self.current_time, 1.5, 40, 150)) if is_dark else int(self.animator.get_sine_value(self.current_time, 1.5, 20, 100))
+        halo_color = QColor(59, 130, 246)
+        halo_grad = QRadialGradient(0, 0, 36)
+        halo_grad.setColorAt(0, QColor(halo_color.red(), halo_color.green(), halo_color.blue(), pulse_alpha))
+        halo_grad.setColorAt(1, QColor(halo_color.red(), halo_color.green(), halo_color.blue(), 0))
+        
+        painter.setBrush(halo_grad)
+        painter.drawEllipse(QRectF(-36, -36, 72, 72))
+        
+        # Colors
+        windshield_color = QColor("#ffffff") if is_dark else QColor("#e5e7eb")
+        wheel_color = QColor("#374151") if is_dark else QColor("#111827")
+        body_outline = QColor("#1e3a8a")
 
-        painter.drawRoundedRect(
-            QRectF(
-                -14,
-                -13,
-                5,
-                10,
-            ),
-            2,
-            2,
-        )
-
-        painter.drawRoundedRect(
-            QRectF(
-                9,
-                -13,
-                5,
-                10,
-            ),
-            2,
-            2,
-        )
-
-        painter.drawRoundedRect(
-            QRectF(
-                -14,
-                4,
-                5,
-                10,
-            ),
-            2,
-            2,
-        )
-
-        painter.drawRoundedRect(
-            QRectF(
-                9,
-                4,
-                5,
-                10,
-            ),
-            2,
-            2,
-        )
-
-        painter.setBrush(
-            QColor("#00d26a")
-        )
-
-        painter.setPen(
-            QPen(
-                QColor("#ffffff"),
-                1,
-            )
-        )
-
-        painter.drawRoundedRect(
-            QRectF(
-                -10,
-                -18,
-                20,
-                36,
-            ),
-            6,
-            6,
-        )
-
-        painter.setBrush(
-            QColor("#0b0f14")
-        )
-
-        painter.drawRoundedRect(
-            QRectF(
-                -6,
-                -10,
-                12,
-                20,
-            ),
-            4,
-            4,
-        )
-
-        painter.setBrush(
-            QColor("#e8f6ff")
-        )
-
+        # Wheels
+        painter.setBrush(wheel_color)
         painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(QRectF(-9, -10, 6, 3), 1, 1) # rear left
+        painter.drawRoundedRect(QRectF(-9, 7, 6, 3), 1, 1)   # rear right
+        painter.drawRoundedRect(QRectF(5, -10, 6, 3), 1, 1)  # front left
+        painter.drawRoundedRect(QRectF(5, 7, 6, 3), 1, 1)    # front right
 
-        painter.drawEllipse(
-            QRectF(
-                -6,
-                -17,
-                4,
-                3,
-            )
-        )
+        # Car Body
+        from PySide6.QtGui import QLinearGradient
+        body_grad = QLinearGradient(-14, 0, 14, 0)
+        body_grad.setColorAt(0, QColor("#2563eb")) # rear
+        body_grad.setColorAt(1, QColor("#3b82f6")) # front
+        
+        painter.setBrush(body_grad)
+        painter.setPen(QPen(body_outline, 1))
+        painter.drawRoundedRect(QRectF(-14, -8, 28, 16), 4, 4)
 
-        painter.drawEllipse(
-            QRectF(
-                2,
-                -17,
-                4,
-                3,
-            )
-        )
-
-        painter.setBrush(
-            QColor("#ff3333")
-        )
-
-        painter.drawEllipse(
-            QRectF(
-                -6,
-                14,
-                4,
-                3,
-            )
-        )
-
-        painter.drawEllipse(
-            QRectF(
-                2,
-                14,
-                4,
-                3,
-            )
-        )
+        # Windshield
+        painter.setBrush(windshield_color)
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(QRectF(3, -5, 6, 10), 2, 2)
 
         painter.restore()

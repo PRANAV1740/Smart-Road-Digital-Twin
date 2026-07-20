@@ -1,1165 +1,367 @@
-# ==================================================
-# SMART ROAD DIGITAL TWIN - ANALYTICS PANEL
-# ==================================================
-
 from collections import Counter
 from datetime import datetime, timedelta
-import math
 
-from PySide6.QtCore import (
-    Qt,
-    QRectF,
-    QPointF,
-    QTimer,
-)
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QPainter,
-    QPen,
-)
+from PySide6.QtCore import Qt, QRectF, QPointF, QTimer
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QLinearGradient, QRadialGradient, QPolygonF
 from PySide6.QtWidgets import (
-    QGridLayout,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
+    QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget, QFrame
 )
 
-from database.database import (
-    get_all_potholes,
-    get_statistics,
-)
+from database.database import get_all_potholes, get_statistics
+from utils.theme import ThemeManager
 
-
-# ==================================================
-# SEVERITY BAR CHART
-# ==================================================
-
-class SeverityBarChart(QWidget):
-    """Display High, Medium and Low pothole counts."""
-
+class BaseChart(QWidget):
     def __init__(self):
         super().__init__()
+        self.theme_manager = ThemeManager()
+        self.theme = self.theme_manager.get_current_theme()
+        self.is_dark = self.theme_manager.is_dark
+        self.theme_manager.theme_changed.connect(self.apply_theme)
+        
+    def apply_theme(self, theme, is_dark):
+        self.theme = theme
+        self.is_dark = is_dark
+        self.update()
 
-        self.values = {
-            "HIGH": 0,
-            "MEDIUM": 0,
-            "LOW": 0,
-        }
+class SeverityBarChart(BaseChart):
+    def __init__(self):
+        super().__init__()
+        self.values = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        self.setMinimumHeight(240)
 
-        self.setMinimumHeight(280)
-
-    def set_values(
-        self,
-        high,
-        medium,
-        low,
-    ):
-        self.values = {
-            "HIGH": high,
-            "MEDIUM": medium,
-            "LOW": low,
-        }
-
+    def set_values(self, high, medium, low):
+        self.values = {"HIGH": high, "MEDIUM": medium, "LOW": low}
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(
-            QPainter.Antialiasing
-        )
-
-        painter.fillRect(
-            self.rect(),
-            QColor("#252525"),
-        )
-
+        painter.setRenderHint(QPainter.Antialiasing)
+        
+        # Transparent background
+        
         width = self.width()
         height = self.height()
+        margin_left, margin_right, margin_top, margin_bottom = 55, 25, 45, 50
+        chart_width = width - margin_left - margin_right
+        chart_height = height - margin_top - margin_bottom
 
-        margin_left = 55
-        margin_right = 25
-        margin_top = 45
-        margin_bottom = 50
+        painter.setPen(QColor(self.theme['text_primary']))
+        painter.setFont(QFont("Arial", 12, QFont.Bold))
+        painter.drawText(QRectF(0, 8, width, 25), Qt.AlignCenter, "SEVERITY DISTRIBUTION")
 
-        chart_width = (
-            width
-            - margin_left
-            - margin_right
-        )
-
-        chart_height = (
-            height
-            - margin_top
-            - margin_bottom
-        )
-
-        painter.setPen(
-            QColor("#ffffff")
-        )
-
-        painter.setFont(
-            QFont(
-                "Arial",
-                12,
-                QFont.Bold,
-            )
-        )
-
-        painter.drawText(
-            QRectF(
-                0,
-                8,
-                width,
-                25,
-            ),
-            Qt.AlignCenter,
-            "SEVERITY DISTRIBUTION",
-        )
-
-        axis_pen = QPen(
-            QColor("#777777"),
-            1,
-        )
-
+        axis_pen = QPen(QColor(self.theme['border']), 1)
         painter.setPen(axis_pen)
+        painter.drawLine(margin_left, margin_top, margin_left, margin_top + chart_height)
+        painter.drawLine(margin_left, margin_top + chart_height, margin_left + chart_width, margin_top + chart_height)
 
-        painter.drawLine(
-            margin_left,
-            margin_top,
-            margin_left,
-            margin_top + chart_height,
-        )
-
-        painter.drawLine(
-            margin_left,
-            margin_top + chart_height,
-            margin_left + chart_width,
-            margin_top + chart_height,
-        )
-
-        maximum_value = max(
-            self.values.values()
-        )
-
-        if maximum_value <= 0:
-            maximum_value = 1
-
+        maximum_value = max(1, max(self.values.values()))
         categories = [
-            (
-                "HIGH",
-                QColor("#ef4444"),
-            ),
-            (
-                "MEDIUM",
-                QColor("#f59e0b"),
-            ),
-            (
-                "LOW",
-                QColor("#22c55e"),
-            ),
+            ("HIGH", QColor(self.theme['danger'])),
+            ("MEDIUM", QColor(self.theme['warning'])),
+            ("LOW", QColor(self.theme['success'])),
         ]
 
-        available_width = (
-            chart_width / len(categories)
-        )
+        avail_w = chart_width / len(categories)
+        bar_w = min(75, avail_w * 0.48)
 
-        bar_width = min(
-            75,
-            available_width * 0.48,
-        )
+        for i, (lbl, color) in enumerate(categories):
+            val = self.values[lbl]
+            bar_h = val / maximum_value * (chart_height - 25)
+            cx = margin_left + avail_w * i + avail_w / 2
+            bx = cx - bar_w / 2
+            by = margin_top + chart_height - bar_h
 
-        for index, (
-            label,
-            color,
-        ) in enumerate(categories):
+            painter.setPen(Qt.NoPen)
+            grad = QLinearGradient(0, by, 0, by + bar_h)
+            grad.setColorAt(0, color.lighter(130))
+            grad.setColorAt(1, color)
+            painter.setBrush(grad)
+            painter.drawRoundedRect(QRectF(bx, by, bar_w, bar_h), 6, 6)
 
-            value = self.values[label]
+            painter.setPen(QColor(self.theme['text_primary']))
+            painter.setFont(QFont("Segoe UI", 11, QFont.Bold))
+            painter.drawText(QRectF(bx, max(margin_top, by - 25), bar_w, 22), Qt.AlignCenter, str(val))
 
-            bar_height = (
-                value
-                / maximum_value
-                * (chart_height - 25)
-            )
+            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            painter.drawText(QRectF(cx - avail_w / 2, margin_top + chart_height + 8, avail_w, 25), Qt.AlignCenter, lbl)
 
-            center_x = (
-                margin_left
-                + available_width
-                * index
-                + available_width / 2
-            )
-
-            bar_x = (
-                center_x
-                - bar_width / 2
-            )
-
-            bar_y = (
-                margin_top
-                + chart_height
-                - bar_height
-            )
-
-            bar_rectangle = QRectF(
-                bar_x,
-                bar_y,
-                bar_width,
-                bar_height,
-            )
-
-            painter.setPen(
-                Qt.NoPen
-            )
-            painter.setBrush(color)
-
-            painter.drawRoundedRect(
-                bar_rectangle,
-                6,
-                6,
-            )
-
-            painter.setPen(
-                QColor("#ffffff")
-            )
-
-            painter.setFont(
-                QFont(
-                    "Arial",
-                    11,
-                    QFont.Bold,
-                )
-            )
-
-            painter.drawText(
-                QRectF(
-                    bar_x,
-                    max(
-                        margin_top,
-                        bar_y - 25,
-                    ),
-                    bar_width,
-                    22,
-                ),
-                Qt.AlignCenter,
-                str(value),
-            )
-
-            painter.setFont(
-                QFont(
-                    "Arial",
-                    9,
-                    QFont.Bold,
-                )
-            )
-
-            painter.drawText(
-                QRectF(
-                    center_x
-                    - available_width / 2,
-                    margin_top
-                    + chart_height
-                    + 8,
-                    available_width,
-                    25,
-                ),
-                Qt.AlignCenter,
-                label,
-            )
-
-
-# ==================================================
-# SEVERITY PIE CHART
-# ==================================================
-
-class SeverityPieChart(QWidget):
-    """Display severity percentages in a pie chart."""
-
+class SeverityPieChart(BaseChart):
     def __init__(self):
         super().__init__()
+        self.values = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        self.setMinimumHeight(240)
 
-        self.values = {
-            "HIGH": 0,
-            "MEDIUM": 0,
-            "LOW": 0,
-        }
-
-        self.setMinimumHeight(280)
-
-    def set_values(
-        self,
-        high,
-        medium,
-        low,
-    ):
-        self.values = {
-            "HIGH": high,
-            "MEDIUM": medium,
-            "LOW": low,
-        }
-
+    def set_values(self, high, medium, low):
+        self.values = {"HIGH": high, "MEDIUM": medium, "LOW": low}
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(
-            QPainter.Antialiasing
-        )
-
-        painter.fillRect(
-            self.rect(),
-            QColor("#252525"),
-        )
-
+        painter.setRenderHint(QPainter.Antialiasing)
+        
         width = self.width()
         height = self.height()
 
-        painter.setPen(
-            QColor("#ffffff")
-        )
+        painter.setPen(QColor(self.theme['text_primary']))
+        painter.setFont(QFont("Arial", 12, QFont.Bold))
+        painter.drawText(QRectF(0, 8, width, 25), Qt.AlignCenter, "SEVERITY PERCENTAGE")
 
-        painter.setFont(
-            QFont(
-                "Arial",
-                12,
-                QFont.Bold,
-            )
-        )
-
-        painter.drawText(
-            QRectF(
-                0,
-                8,
-                width,
-                25,
-            ),
-            Qt.AlignCenter,
-            "SEVERITY PERCENTAGE",
-        )
-
-        total = sum(
-            self.values.values()
-        )
-
-        chart_size = min(
-            width * 0.52,
-            height - 80,
-        )
-
-        chart_rectangle = QRectF(
-            28,
-            48,
-            chart_size,
-            chart_size,
-        )
+        total = sum(self.values.values())
+        chart_size = min(width * 0.52, height - 80)
+        chart_rect = QRectF(28, 48, chart_size, chart_size)
 
         colors = {
-            "HIGH": QColor("#ef4444"),
-            "MEDIUM": QColor("#f59e0b"),
-            "LOW": QColor("#22c55e"),
+            "HIGH": QColor(self.theme['danger']),
+            "MEDIUM": QColor(self.theme['warning']),
+            "LOW": QColor(self.theme['success']),
         }
 
         if total <= 0:
-            painter.setPen(
-                QPen(
-                    QColor("#555555"),
-                    2,
-                )
-            )
-
-            painter.setBrush(
-                QColor("#303030")
-            )
-
-            painter.drawEllipse(
-                chart_rectangle
-            )
-
-            painter.setPen(
-                QColor("#aaaaaa")
-            )
-
-            painter.setFont(
-                QFont(
-                    "Arial",
-                    10,
-                )
-            )
-
-            painter.drawText(
-                chart_rectangle,
-                Qt.AlignCenter,
-                "NO DATA",
-            )
-
+            painter.setPen(QPen(QColor(self.theme['text_muted']), 2))
+            painter.setBrush(QColor(self.theme['border']))
+            painter.drawEllipse(chart_rect)
+            painter.setPen(QColor(self.theme['text_secondary']))
+            painter.setFont(QFont("Arial", 10))
+            painter.drawText(chart_rect, Qt.AlignCenter, "NO DATA")
         else:
             start_angle = 90 * 16
-
-            for label in [
-                "HIGH",
-                "MEDIUM",
-                "LOW",
-            ]:
-                value = self.values[label]
-
-                if value <= 0:
-                    continue
-
-                angle = int(
-                    value
-                    / total
-                    * 360
-                    * 16
-                )
-
-                painter.setPen(
-                    QPen(
-                        QColor("#252525"),
-                        2,
-                    )
-                )
-
-                painter.setBrush(
-                    colors[label]
-                )
-
-                painter.drawPie(
-                    chart_rectangle,
-                    start_angle,
-                    -angle,
-                )
-
+            for lbl in ["HIGH", "MEDIUM", "LOW"]:
+                val = self.values[lbl]
+                if val <= 0: continue
+                angle = int(val / total * 360 * 16)
+                painter.setPen(QPen(QColor(self.theme['surface']), 2))
+                grad = QRadialGradient(chart_rect.center(), chart_size/2.0)
+                grad.setColorAt(0, colors[lbl].lighter(120))
+                grad.setColorAt(1, colors[lbl])
+                painter.setBrush(grad)
+                painter.drawPie(chart_rect, start_angle, -angle)
                 start_angle -= angle
 
             inner_size = chart_size * 0.48
+            inner_rect = QRectF(chart_rect.center().x() - inner_size / 2, chart_rect.center().y() - inner_size / 2, inner_size, inner_size)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(self.theme['surface']))
+            painter.drawEllipse(inner_rect)
+            painter.setPen(QColor(self.theme['text_primary']))
+            painter.setFont(QFont("Segoe UI", 17, QFont.Bold))
+            painter.drawText(inner_rect, Qt.AlignCenter, str(total))
 
-            inner_rectangle = QRectF(
-                chart_rectangle.center().x()
-                - inner_size / 2,
-                chart_rectangle.center().y()
-                - inner_size / 2,
-                inner_size,
-                inner_size,
-            )
-
-            painter.setPen(
-                Qt.NoPen
-            )
-
-            painter.setBrush(
-                QColor("#252525")
-            )
-
-            painter.drawEllipse(
-                inner_rectangle
-            )
-
-            painter.setPen(
-                QColor("#ffffff")
-            )
-
-            painter.setFont(
-                QFont(
-                    "Arial",
-                    17,
-                    QFont.Bold,
-                )
-            )
-
-            painter.drawText(
-                inner_rectangle,
-                Qt.AlignCenter,
-                str(total),
-            )
-
-        legend_x = (
-            chart_rectangle.right()
-            + 30
-        )
-
+        legend_x = chart_rect.right() + 30
         legend_y = 70
-
-        for label in [
-            "HIGH",
-            "MEDIUM",
-            "LOW",
-        ]:
-            value = self.values[label]
-
-            percentage = (
-                value / total * 100
-                if total > 0
-                else 0
-            )
-
-            painter.setPen(
-                Qt.NoPen
-            )
-
-            painter.setBrush(
-                colors[label]
-            )
-
-            painter.drawRoundedRect(
-                QRectF(
-                    legend_x,
-                    legend_y,
-                    16,
-                    16,
-                ),
-                3,
-                3,
-            )
-
-            painter.setPen(
-                QColor("#ffffff")
-            )
-
-            painter.setFont(
-                QFont(
-                    "Arial",
-                    9,
-                    QFont.Bold,
-                )
-            )
-
-            painter.drawText(
-                QRectF(
-                    legend_x + 25,
-                    legend_y - 4,
-                    max(
-                        100,
-                        width - legend_x - 30,
-                    ),
-                    25,
-                ),
-                Qt.AlignLeft
-                | Qt.AlignVCenter,
-                (
-                    f"{label}: "
-                    f"{value} "
-                    f"({percentage:.1f}%)"
-                ),
-            )
-
+        for lbl in ["HIGH", "MEDIUM", "LOW"]:
+            val = self.values[lbl]
+            percent = (val / total * 100) if total > 0 else 0
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(colors[lbl])
+            painter.drawRoundedRect(QRectF(legend_x, legend_y, 16, 16), 3, 3)
+            painter.setPen(QColor(self.theme['text_primary']))
+            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            painter.drawText(QRectF(legend_x + 25, legend_y - 4, max(100, width - legend_x - 30), 25), Qt.AlignLeft | Qt.AlignVCenter, f"{lbl}: {val} ({percent:.1f}%)")
             legend_y += 45
 
-
-# ==================================================
-# DETECTION TIMELINE CHART
-# ==================================================
-
-class DetectionTimelineChart(QWidget):
-    """Display daily pothole detections for the last seven days."""
-
+class DetectionTimelineChart(BaseChart):
     def __init__(self):
         super().__init__()
-
         self.labels = []
         self.values = []
-
-        self.setMinimumHeight(320)
+        self.setMinimumHeight(280)
 
     def set_records(self, records):
         today = datetime.now().date()
-
-        dates = [
-            today - timedelta(days=offset)
-            for offset in range(6, -1, -1)
-        ]
-
+        dates = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
         daily_counts = Counter()
-
         for record in records:
-            detected_at = str(
-                record.get(
-                    "detected_at",
-                    "",
-                )
-            )
-
+            dat_str = str(record.get("detected_at", ""))
             try:
-                detected_date = (
-                    datetime.strptime(
-                        detected_at,
-                        "%Y-%m-%d %H:%M:%S",
-                    ).date()
-                )
-
-                daily_counts[
-                    detected_date
-                ] += 1
-
+                d = datetime.strptime(dat_str, "%Y-%m-%d %H:%M:%S").date()
+                daily_counts[d] += 1
             except ValueError:
                 continue
-
-        self.labels = [
-            date.strftime("%d %b")
-            for date in dates
-        ]
-
-        self.values = [
-            daily_counts[date]
-            for date in dates
-        ]
-
+        self.labels = [d.strftime("%d %b") for d in dates]
+        self.values = [daily_counts[d] for d in dates]
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(
-            QPainter.Antialiasing
-        )
-
-        painter.fillRect(
-            self.rect(),
-            QColor("#252525"),
-        )
-
+        painter.setRenderHint(QPainter.Antialiasing)
+        
         width = self.width()
         height = self.height()
+        margin_left, margin_right, margin_top, margin_bottom = 60, 30, 55, 55
+        chart_width = width - margin_left - margin_right
+        chart_height = height - margin_top - margin_bottom
 
-        margin_left = 60
-        margin_right = 30
-        margin_top = 55
-        margin_bottom = 55
+        painter.setPen(QColor(self.theme['text_primary']))
+        painter.setFont(QFont("Segoe UI", 12, QFont.Bold))
+        painter.drawText(QRectF(0, 8, width, 25), Qt.AlignCenter, "LAST 7 DAYS DETECTION TREND")
 
-        chart_width = (
-            width
-            - margin_left
-            - margin_right
-        )
+        painter.setPen(QPen(QColor(self.theme['border']), 1))
+        # Removed heavy grid lines, just drawing bottom axis
+        painter.drawLine(margin_left, int(margin_top + chart_height), margin_left + chart_width, int(margin_top + chart_height))
 
-        chart_height = (
-            height
-            - margin_top
-            - margin_bottom
-        )
-
-        painter.setPen(
-            QColor("#ffffff")
-        )
-
-        painter.setFont(
-            QFont(
-                "Arial",
-                12,
-                QFont.Bold,
-            )
-        )
-
-        painter.drawText(
-            QRectF(
-                0,
-                8,
-                width,
-                25,
-            ),
-            Qt.AlignCenter,
-            "LAST 7 DAYS DETECTION TREND",
-        )
-
-        painter.setPen(
-            QPen(
-                QColor("#444444"),
-                1,
-            )
-        )
-
-        horizontal_lines = 4
-
-        for line_index in range(
-            horizontal_lines + 1
-        ):
-            line_y = (
-                margin_top
-                + chart_height
-                * line_index
-                / horizontal_lines
-            )
-
-            painter.drawLine(
-                margin_left,
-                int(line_y),
-                margin_left + chart_width,
-                int(line_y),
-            )
-
-        if not self.values:
-            return
-
-        maximum_value = max(
-            self.values
-        )
-
-        if maximum_value <= 0:
-            maximum_value = 1
-
-        point_spacing = (
-            chart_width
-            / max(
-                1,
-                len(self.values) - 1,
-            )
-        )
-
+        if not self.values: return
+        maximum_value = max(1, max(self.values))
+        pt_spacing = chart_width / max(1, len(self.values) - 1)
         points = []
 
-        for index, value in enumerate(
-            self.values
-        ):
-            point_x = (
-                margin_left
-                + index * point_spacing
-            )
+        for i, val in enumerate(self.values):
+            px = margin_left + i * pt_spacing
+            py = margin_top + chart_height - (val / maximum_value * (chart_height - 15))
+            points.append(QPointF(px, py))
 
-            point_y = (
-                margin_top
-                + chart_height
-                - (
-                    value
-                    / maximum_value
-                    * (chart_height - 15)
-                )
-            )
+        painter.setPen(QPen(QColor(self.theme['accent']), 3))
+        for i in range(len(points) - 1):
+            painter.drawLine(points[i], points[i + 1])
+            
+        # Draw area fill
+        fill_poly = QPolygonF(points)
+        fill_poly.append(QPointF(points[-1].x(), margin_top + chart_height))
+        fill_poly.append(QPointF(points[0].x(), margin_top + chart_height))
+        
+        fill_grad = QLinearGradient(0, margin_top, 0, margin_top + chart_height)
+        accent_col = QColor(self.theme['accent'])
+        fill_grad.setColorAt(0, QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 100))
+        fill_grad.setColorAt(1, QColor(accent_col.red(), accent_col.green(), accent_col.blue(), 0))
+        
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(fill_grad)
+        painter.drawPolygon(fill_poly)
 
-            points.append(
-                QPointF(
-                    point_x,
-                    point_y,
-                )
-            )
+        for i, pt in enumerate(points):
+            painter.setPen(QPen(QColor(self.theme['surface']), 2))
+            painter.setBrush(QColor(self.theme['accent']))
+            painter.drawEllipse(pt, 6, 6)
 
-        line_pen = QPen(
-            QColor("#38bdf8"),
-            3,
-        )
+            painter.setPen(QColor(self.theme['text_primary']))
+            painter.setFont(QFont("Segoe UI", 9, QFont.Bold))
+            painter.drawText(QRectF(pt.x() - 20, pt.y() - 28, 40, 20), Qt.AlignCenter, str(self.values[i]))
 
-        painter.setPen(line_pen)
-
-        for index in range(
-            len(points) - 1
-        ):
-            painter.drawLine(
-                points[index],
-                points[index + 1],
-            )
-
-        for index, point in enumerate(
-            points
-        ):
-            painter.setPen(
-                QPen(
-                    QColor("#ffffff"),
-                    2,
-                )
-            )
-
-            painter.setBrush(
-                QColor("#0ea5e9")
-            )
-
-            painter.drawEllipse(
-                point,
-                6,
-                6,
-            )
-
-            painter.setPen(
-                QColor("#ffffff")
-            )
-
-            painter.setFont(
-                QFont(
-                    "Arial",
-                    9,
-                    QFont.Bold,
-                )
-            )
-
-            painter.drawText(
-                QRectF(
-                    point.x() - 20,
-                    point.y() - 28,
-                    40,
-                    20,
-                ),
-                Qt.AlignCenter,
-                str(self.values[index]),
-            )
-
-            painter.setFont(
-                QFont(
-                    "Arial",
-                    8,
-                )
-            )
-
-            painter.drawText(
-                QRectF(
-                    point.x() - 38,
-                    margin_top
-                    + chart_height
-                    + 10,
-                    76,
-                    25,
-                ),
-                Qt.AlignCenter,
-                self.labels[index],
-            )
-
-
-# ==================================================
-# MAIN ANALYTICS PANEL
-# ==================================================
+            painter.setFont(QFont("Segoe UI", 8))
+            painter.drawText(QRectF(pt.x() - 38, margin_top + chart_height + 10, 76, 25), Qt.AlignCenter, self.labels[i])
 
 class AnalyticsPanel(QWidget):
-    """
-    Dedicated analytics page showing database-driven
-    pothole charts and summary information.
-    """
-
     def __init__(self):
         super().__init__()
-
-        self.setStyleSheet(
-            """
-            QWidget {
-                background-color:#1e1e1e;
-                color:white;
-            }
-
-            QLabel#analyticsTitle {
-                font-size:28px;
-                font-weight:bold;
-                color:#ffffff;
-                padding:8px;
-            }
-
-            QLabel#analyticsSubtitle {
-                font-size:12px;
-                color:#a3a3a3;
-                padding-bottom:8px;
-            }
-
-            QWidget#summaryCard {
-                background-color:#292929;
-                border:1px solid #414141;
-                border-radius:10px;
-            }
-
-            QLabel#summaryTitle {
-                color:#bdbdbd;
-                font-size:11px;
-                font-weight:bold;
-            }
-
-            QLabel#summaryValue {
-                color:#ffffff;
-                font-size:22px;
-                font-weight:bold;
-            }
-
-            QPushButton {
-                background-color:#3b82f6;
-                color:white;
-                border:none;
-                border-radius:6px;
-                padding:10px 22px;
-                font-size:12px;
-                font-weight:bold;
-            }
-
-            QPushButton:hover {
-                background-color:#2563eb;
-            }
-
-            QPushButton:pressed {
-                background-color:#1d4ed8;
-            }
-            """
-        )
-
+        self.theme_manager = ThemeManager()
         self.summary_labels = {}
+        
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(12, 8, 12, 12)
+        self.main_layout.setSpacing(10)
 
-        self.build_interface()
+        self.title_label = QLabel("ROAD ANALYTICS")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        self.subtitle_label = QLabel("Database-driven pothole severity, depth and detection trends")
+        self.subtitle_label.setAlignment(Qt.AlignCenter)
 
-        self.refresh_timer = QTimer(self)
-        self.refresh_timer.timeout.connect(
-            self.refresh_analytics
-        )
-        self.refresh_timer.start(2000)
-
-        self.refresh_analytics()
-
-    def build_interface(self):
-        main_layout = QVBoxLayout(self)
-
-        main_layout.setContentsMargins(
-            18,
-            12,
-            18,
-            18,
-        )
-
-        main_layout.setSpacing(14)
-
-        title_label = QLabel(
-            "ROAD ANALYTICS"
-        )
-        title_label.setObjectName(
-            "analyticsTitle"
-        )
-        title_label.setAlignment(
-            Qt.AlignCenter
-        )
-
-        subtitle_label = QLabel(
-            (
-                "Database-driven pothole severity, "
-                "depth and detection trends"
-            )
-        )
-        subtitle_label.setObjectName(
-            "analyticsSubtitle"
-        )
-        subtitle_label.setAlignment(
-            Qt.AlignCenter
-        )
-
-        main_layout.addWidget(
-            title_label
-        )
-        main_layout.addWidget(
-            subtitle_label
-        )
+        self.main_layout.addWidget(self.title_label)
+        self.main_layout.addWidget(self.subtitle_label)
 
         summary_layout = QHBoxLayout()
         summary_layout.setSpacing(12)
-
-        summary_items = [
-            (
-                "total",
-                "TOTAL POTHOLES",
-            ),
-            (
-                "average",
-                "AVERAGE DEPTH",
-            ),
-            (
-                "maximum",
-                "MAXIMUM DEPTH",
-            ),
-            (
-                "critical",
-                "HIGH SEVERITY",
-            ),
-        ]
-
-        for key, title in summary_items:
-            card = self.create_summary_card(
-                key,
-                title,
-            )
-
-            summary_layout.addWidget(
-                card
-            )
-
-        main_layout.addLayout(
-            summary_layout
-        )
+        items = [("total", "TOTAL POTHOLES"), ("average", "AVERAGE DEPTH"), ("maximum", "MAXIMUM DEPTH"), ("critical", "HIGH SEVERITY")]
+        for key, title in items:
+            summary_layout.addWidget(self.create_summary_card(key, title))
+        self.main_layout.addLayout(summary_layout)
 
         charts_layout = QGridLayout()
         charts_layout.setSpacing(14)
-
         self.bar_chart = SeverityBarChart()
         self.pie_chart = SeverityPieChart()
-        self.timeline_chart = (
-            DetectionTimelineChart()
-        )
+        self.timeline_chart = DetectionTimelineChart()
 
-        charts_layout.addWidget(
-            self.bar_chart,
-            0,
-            0,
-        )
+        charts_layout.addWidget(self.bar_chart, 0, 0)
+        charts_layout.addWidget(self.pie_chart, 0, 1)
+        charts_layout.addWidget(self.timeline_chart, 1, 0, 1, 2)
+        charts_layout.setColumnStretch(0, 1)
+        charts_layout.setColumnStretch(1, 1)
 
-        charts_layout.addWidget(
-            self.pie_chart,
-            0,
-            1,
-        )
-
-        charts_layout.addWidget(
-            self.timeline_chart,
-            1,
-            0,
-            1,
-            2,
-        )
-
-        charts_layout.setColumnStretch(
-            0,
-            1,
-        )
-
-        charts_layout.setColumnStretch(
-            1,
-            1,
-        )
-
-        main_layout.addLayout(
-            charts_layout
-        )
+        self.main_layout.addLayout(charts_layout)
 
         bottom_layout = QHBoxLayout()
+        self.last_updated_label = QLabel("Last updated: --")
+        self.refresh_button = QPushButton("REFRESH ANALYTICS")
+        self.refresh_button.clicked.connect(self.refresh_analytics)
+        self.refresh_button.setCursor(Qt.PointingHandCursor)
 
-        self.last_updated_label = QLabel(
-            "Last updated: --"
-        )
-
-        self.last_updated_label.setStyleSheet(
-            """
-            color:#a3a3a3;
-            font-size:11px;
-            """
-        )
-
-        self.refresh_button = QPushButton(
-            "REFRESH ANALYTICS"
-        )
-
-        self.refresh_button.clicked.connect(
-            self.refresh_analytics
-        )
-
-        bottom_layout.addWidget(
-            self.last_updated_label
-        )
-
+        bottom_layout.addWidget(self.last_updated_label)
         bottom_layout.addStretch()
+        bottom_layout.addWidget(self.refresh_button)
+        self.main_layout.addLayout(bottom_layout)
 
-        bottom_layout.addWidget(
-            self.refresh_button
-        )
+        self.theme_manager.theme_changed.connect(self.apply_theme)
+        self.apply_theme(self.theme_manager.get_current_theme(), self.theme_manager.is_dark)
 
-        main_layout.addLayout(
-            bottom_layout
-        )
+        self.refresh_timer = QTimer(self)
+        self.refresh_timer.timeout.connect(self.refresh_analytics)
+        self.refresh_timer.start(2000)
+        self.refresh_analytics()
 
-    def create_summary_card(
-        self,
-        key,
-        title,
-    ):
-        card = QWidget()
-        card.setObjectName(
-            "summaryCard"
-        )
-
+    def create_summary_card(self, key, title):
+        card = QFrame()
+        card.setObjectName("summaryCard")
         card.setMinimumHeight(85)
-
-        card_layout = QVBoxLayout(card)
-
-        card_layout.setContentsMargins(
-            12,
-            10,
-            12,
-            10,
-        )
-
-        title_label = QLabel(title)
-        title_label.setObjectName(
-            "summaryTitle"
-        )
-        title_label.setAlignment(
-            Qt.AlignCenter
-        )
-
-        value_label = QLabel("0")
-        value_label.setObjectName(
-            "summaryValue"
-        )
-        value_label.setAlignment(
-            Qt.AlignCenter
-        )
-
-        card_layout.addWidget(
-            title_label
-        )
-
-        card_layout.addWidget(
-            value_label
-        )
-
-        self.summary_labels[
-            key
-        ] = value_label
-
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(12, 10, 12, 10)
+        tl = QLabel(title)
+        tl.setObjectName("summaryTitle")
+        tl.setAlignment(Qt.AlignCenter)
+        vl = QLabel("0")
+        vl.setObjectName("summaryValue")
+        vl.setAlignment(Qt.AlignCenter)
+        cl.addWidget(tl)
+        cl.addWidget(vl)
+        self.summary_labels[key] = {"widget": card, "title": tl, "val": vl}
         return card
 
-    def refresh_analytics(self):
-        """Reload all analytics from the database."""
+    def apply_theme(self, theme, is_dark):
+        self.theme = theme
+        border = f"1px solid {theme['border']}" if is_dark else "none"
+        shadow = "" if is_dark else "box-shadow: 0 1px 3px rgba(0,0,0,0.08);"
+        
+        self.title_label.setStyleSheet(f"color: {theme['text_primary']}; font-size: 28px; font-weight: bold; font-family: 'Segoe UI';")
+        for key, ui in self.summary_labels.items():
+            tint_col = theme['danger'] if key == "critical" else theme['text_primary']
+            ui["val"].setStyleSheet(f"color: {tint_col}; font-size: 28px; font-weight: bold; background: transparent; border: none;")
+            ui["title"].setStyleSheet(f"font-size: 11px; font-weight: bold; color: {theme['text_secondary']}; background: transparent; border: none;")
+            ui["widget"].setStyleSheet(f"""
+                QFrame#summaryCard {{
+                    background-color: {theme['surface']};
+                    border-radius: 12px;
+                    border: {border};
+                    {shadow}
+                }}
+            """)
 
+        self.refresh_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {theme['accent']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 10px 22px;
+                font-size: 12px;
+                font-weight: bold;
+                font-family: 'Segoe UI';
+            }}
+            QPushButton:hover {{
+                background-color: {theme['accent_hover']};
+            }}
+        """)
+
+    def refresh_analytics(self):
         try:
             statistics = get_statistics()
             records = get_all_potholes()
-
-            self.summary_labels[
-                "total"
-            ].setText(
-                str(statistics["total"])
-            )
-
-            self.summary_labels[
-                "average"
-            ].setText(
-                (
-                    f"{statistics['average_depth']:.2f} cm"
-                )
-            )
-
-            self.summary_labels[
-                "maximum"
-            ].setText(
-                (
-                    f"{statistics['maximum_depth']:.2f} cm"
-                )
-            )
-
-            self.summary_labels[
-                "critical"
-            ].setText(
-                str(statistics["high"])
-            )
-
-            self.bar_chart.set_values(
-                statistics["high"],
-                statistics["medium"],
-                statistics["low"],
-            )
-
-            self.pie_chart.set_values(
-                statistics["high"],
-                statistics["medium"],
-                statistics["low"],
-            )
-
-            self.timeline_chart.set_records(
-                records
-            )
-
-            current_time = datetime.now().strftime(
-                "%H:%M:%S"
-            )
-
-            self.last_updated_label.setText(
-                f"Last updated: {current_time}"
-            )
-
+            self.summary_labels["total"]["val"].setText(str(statistics["total"]))
+            self.summary_labels["average"]["val"].setText(f"{statistics['average_depth']:.2f} cm")
+            self.summary_labels["maximum"]["val"].setText(f"{statistics['maximum_depth']:.2f} cm")
+            self.summary_labels["critical"]["val"].setText(str(statistics["high"]))
+            
+            self.bar_chart.set_values(statistics["high"], statistics["medium"], statistics["low"])
+            self.pie_chart.set_values(statistics["high"], statistics["medium"], statistics["low"])
+            self.timeline_chart.set_records(records)
+            
+            self.last_updated_label.setText(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
         except Exception as error:
-            self.last_updated_label.setText(
-                f"Analytics error: {error}"
-            )
+            self.last_updated_label.setText(f"Analytics error: {error}")

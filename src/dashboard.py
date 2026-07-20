@@ -3,7 +3,8 @@
 # PROFESSIONAL UI POLISH
 # ==================================================
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Property
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -12,7 +13,13 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
+    QPushButton,
+    QSpacerItem,
+    QSizePolicy,
+    QGraphicsOpacityEffect
 )
+from utils.theme import ThemeManager
+from utils.animator import GlobalAnimator
 
 from services.data_source_manager import DataSourceManager
 from services.esp32_service import ESP32Service
@@ -33,6 +40,39 @@ from widgets.statistics_panel import StatisticsPanel
 from widgets.status_card import StatusBar
 from widgets.ml_summary_card import MLSummaryCard
 from widgets.ml_panel import MLPanel
+
+class RotatingThemeButton(QPushButton):
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(32, 32)
+        self.setCursor(Qt.PointingHandCursor)
+        self._rotation = 0.0
+        self.anim = QPropertyAnimation(self, b"rotation_angle")
+        self.anim.setDuration(300)
+        self.anim.setEasingCurve(QEasingCurve.InOutQuad)
+        
+    def get_rotation(self):
+        return self._rotation
+        
+    def set_rotation(self, value):
+        self._rotation = value
+        self.update()
+        
+    rotation_angle = Property(float, get_rotation, set_rotation)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self._rotation)
+        painter.translate(-self.width() / 2, -self.height() / 2)
+        super().paintEvent(event)
+        
+    def spin(self):
+        self.anim.stop()
+        self.anim.setStartValue(0.0)
+        self.anim.setEndValue(180.0)
+        self.anim.start()
 
 
 class Dashboard(QWidget):
@@ -70,188 +110,145 @@ class Dashboard(QWidget):
         self.simulator_timer.timeout.connect(self.update_data_source)
         self.simulator_timer.start(300)
 
-        self.setStyleSheet(
-            """
-            QWidget {
-                background-color:#0f1318;
-                color:#f4f7fb;
-                font-family:"Segoe UI";
-            }
-
-            QLabel {
-                background:transparent;
-            }
-
-            QFrame#headerFrame {
-                background:#151a21;
-                border:1px solid #242c36;
-                border-radius:10px;
-            }
-
-            QLabel#productLabel {
-                color:#f8fafc;
-                font-size:24px;
-                font-weight:700;
-                letter-spacing:1px;
-            }
-
-            QLabel#productSubtitle {
-                color:#8e99a8;
-                font-size:11px;
-                font-weight:500;
-            }
-
-            QLabel#versionBadge {
-                color:#9fc5ff;
-                background:#18283d;
-                border:1px solid #274a73;
-                border-radius:10px;
-                padding:5px 10px;
-                font-size:10px;
-                font-weight:700;
-            }
-
-            QScrollArea {
-                border:none;
-                background:#0f1318;
-            }
-
-            QScrollArea > QWidget > QWidget {
-                background:#0f1318;
-            }
-
-            QScrollBar:vertical {
-                background:#10151b;
-                width:11px;
-                margin:2px;
-                border-radius:5px;
-            }
-
-            QScrollBar::handle:vertical {
-                background:#3c4653;
-                min-height:36px;
-                border-radius:5px;
-            }
-
-            QScrollBar::handle:vertical:hover {
-                background:#566372;
-            }
-
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                height:0px;
-            }
-
-            QScrollBar:horizontal {
-                background:#10151b;
-                height:10px;
-                margin:2px;
-                border-radius:5px;
-            }
-
-            QScrollBar::handle:horizontal {
-                background:#3c4653;
-                min-width:36px;
-                border-radius:5px;
-            }
-
-            QScrollBar::handle:horizontal:hover {
-                background:#566372;
-            }
-
-            QScrollBar::add-line:horizontal,
-            QScrollBar::sub-line:horizontal {
-                width:0px;
-            }
-
-            QTabWidget::pane {
-                background:#10151b;
-                border:1px solid #242c36;
-                border-radius:9px;
-                top:-1px;
-            }
-
-            QTabBar::tab {
-                background:#151a21;
-                color:#8793a2;
-                border:1px solid #242c36;
-                border-bottom:none;
-                padding:10px 24px;
-                min-width:128px;
-                min-height:20px;
-                font-size:11px;
-                font-weight:700;
-                letter-spacing:0.5px;
-            }
-
-            QTabBar::tab:first {
-                border-top-left-radius:8px;
-            }
-
-            QTabBar::tab:last {
-                border-top-right-radius:8px;
-            }
-
-            QTabBar::tab:selected {
-                background:#1d2733;
-                color:#f8fafc;
-                border-color:#344253;
-                border-top:2px solid #4f8cff;
-            }
-
-            QTabBar::tab:hover:!selected {
-                background:#1a2028;
-                color:#d5dbe3;
-            }
-            """
-        )
+        self.theme_manager = ThemeManager()
+        self.theme = self.theme_manager.get_current_theme()
+        self.theme_manager.theme_changed.connect(self.apply_theme)
 
         self.build_interface()
+        
+        self.animator = GlobalAnimator()
+        self.animator.tick.connect(self.on_animator_tick)
+
+        self.apply_theme(self.theme_manager.get_current_theme(), self.theme_manager.is_dark)
+        
+        # Fade to black overlay for theme transition
+        self.theme_overlay = QFrame(self)
+        self.theme_overlay.setStyleSheet("background-color: #000000;")
+        self.theme_overlay_effect = QGraphicsOpacityEffect(self.theme_overlay)
+        self.theme_overlay_effect.setOpacity(0.0)
+        self.theme_overlay.setGraphicsEffect(self.theme_overlay_effect)
+        self.theme_overlay.hide()
+        
+        self.overlay_anim = QPropertyAnimation(self.theme_overlay_effect, b"opacity")
+        self.overlay_anim.setDuration(150)
+        self.overlay_anim.finished.connect(self.on_theme_fade_step)
+
+    def on_animator_tick(self, timestamp):
+        # Pulse LIVE badge only if in hardware mode
+        if self.data_source_manager.get_mode() == "hardware":
+            val = self.animator.get_sine_value(timestamp, 1.5, 0.5, 1.0)
+            if hasattr(self, 'live_badge_effect'):
+                self.live_badge_effect.setOpacity(val)
+        else:
+            if hasattr(self, 'live_badge_effect'):
+                self.live_badge_effect.setOpacity(1.0)
+
+    def on_theme_toggle_clicked(self):
+        self.theme_toggle_btn.spin()
+        self.theme_overlay.setGeometry(self.rect())
+        self.theme_overlay.show()
+        self.theme_overlay.raise_()
+        
+        self.overlay_anim.stop()
+        self.overlay_anim.setStartValue(0.0)
+        self.overlay_anim.setEndValue(1.0)
+        self.overlay_anim.start()
+        
+    def on_theme_fade_step(self):
+        if self.overlay_anim.direction() == QPropertyAnimation.Forward:
+            # We are faded to black, switch theme!
+            self.theme_manager.toggle_theme()
+            # Fade out
+            self.overlay_anim.setDirection(QPropertyAnimation.Backward)
+            self.overlay_anim.start()
+        else:
+            self.theme_overlay.hide()
+            self.overlay_anim.setDirection(QPropertyAnimation.Forward)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.theme_overlay.setGeometry(self.rect())
 
     def build_interface(self):
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(14, 12, 14, 12)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        header_frame = QFrame()
-        header_frame.setObjectName("headerFrame")
+        # HEADER BAR
+        self.header_frame = QFrame()
+        self.header_frame.setObjectName("headerFrame")
+        self.header_frame.setFixedHeight(56)
 
-        header_layout = QHBoxLayout(header_frame)
-        header_layout.setContentsMargins(18, 10, 18, 10)
-        header_layout.setSpacing(12)
+        header_layout = QHBoxLayout(self.header_frame)
+        header_layout.setContentsMargins(20, 0, 20, 0)
+        header_layout.setSpacing(20)
 
-        title_block = QVBoxLayout()
-        title_block.setSpacing(1)
+        # Left: App name + Dot
+        left_box = QHBoxLayout()
+        left_box.setSpacing(6)
+        self.app_title = QLabel("RoadSense")
+        self.app_title.setStyleSheet("font-size: 20px; font-weight: 600; font-family: 'Segoe UI';")
+        self.status_dot = QLabel()
+        self.status_dot.setFixedSize(8, 8)
+        self.status_dot.setStyleSheet("border-radius: 4px; background-color: #22c55e;")
+        left_box.addWidget(self.app_title)
+        left_box.addWidget(self.status_dot, 0, Qt.AlignVCenter)
 
-        title = QLabel("SMART ROAD DIGITAL TWIN")
-        title.setObjectName("productLabel")
-
-        subtitle = QLabel(
-            "AI-assisted road-condition monitoring and digital mapping"
-        )
-        subtitle.setObjectName("productSubtitle")
-
-        title_block.addWidget(title)
-        title_block.addWidget(subtitle)
-
-        version_badge = QLabel("SYSTEM v1.0")
-        version_badge.setObjectName("versionBadge")
-        version_badge.setAlignment(Qt.AlignCenter)
-
-        header_layout.addLayout(title_block)
+        header_layout.addLayout(left_box)
         header_layout.addStretch()
-        header_layout.addWidget(version_badge)
 
-        main_layout.addWidget(header_frame)
+        # Center: Pill Tabs
+        self.tabs_layout = QHBoxLayout()
+        self.tabs_layout.setSpacing(4)
+        
+        self.tab_buttons = []
+        tabs = [("MONITORING", 0), ("ANALYTICS", 1), ("REPORTS", 2), ("SETTINGS", 3), ("ML ENGINE", 4)]
+        
+        for name, idx in tabs:
+            btn = QPushButton(name)
+            btn.setFixedHeight(32)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda checked, i=idx: self.set_active_tab(i))
+            self.tabs_layout.addWidget(btn)
+            self.tab_buttons.append(btn)
+            
+        header_layout.addLayout(self.tabs_layout)
+        header_layout.addStretch()
 
-        self.status_bar = StatusBar()
-        main_layout.addWidget(self.status_bar)
+        # Right: Theme toggle & Live Badge
+        right_box = QHBoxLayout()
+        right_box.setSpacing(12)
+        
+        self.theme_toggle_btn = RotatingThemeButton()
+        self.theme_toggle_btn.setText("🌙")
+        self.theme_toggle_btn.clicked.connect(self.on_theme_toggle_clicked)
+        
+        self.live_badge = QLabel("LIVE")
+        self.live_badge.setAlignment(Qt.AlignCenter)
+        self.live_badge.setFixedSize(50, 24)
+        
+        self.live_badge_effect = QGraphicsOpacityEffect(self.live_badge)
+        self.live_badge.setGraphicsEffect(self.live_badge_effect)
+        
+        right_box.addWidget(self.theme_toggle_btn)
+        right_box.addWidget(self.live_badge, 0, Qt.AlignVCenter)
+        
+        header_layout.addLayout(right_box)
+        
+        main_layout.addWidget(self.header_frame)
 
+        # Remove the legacy status bar for the minimal design
+        # if self.status_bar exists, we don't need it.
+
+        # Tab Widget content area
+        content_frame = QFrame()
+        content_layout = QVBoxLayout(content_frame)
+        content_layout.setContentsMargins(14, 14, 14, 14)
+        
         self.main_tabs = QTabWidget()
         self.main_tabs.setDocumentMode(True)
-        self.main_tabs.setMovable(False)
-        self.main_tabs.setTabsClosable(False)
-
+        self.main_tabs.tabBar().hide() # Hide default
+        
         self.monitoring_page = self.create_monitoring_page()
         self.analytics_page = self.create_analytics_page()
         self.reports_page = self.create_reports_page()
@@ -265,13 +262,44 @@ class Dashboard(QWidget):
         self.main_tabs.addTab(self.ml_page, "ML ENGINE")
 
         self.main_tabs.currentChanged.connect(self.handle_tab_change)
-        main_layout.addWidget(self.main_tabs, 1)
+        content_layout.addWidget(self.main_tabs)
+        main_layout.addWidget(content_frame, 1)
+
+        self.set_active_tab(0) # Default
+        
+        # Sequentially fade in all layout elements to boot
+        self.run_boot_sequence()
+        
+    def run_boot_sequence(self):
+        targets = [
+            self.map_widget, self.camera_panel, self.alert_panel, 
+            self.ml_summary_card, self.sensor_panel, self.statistics_panel, self.history_panel
+        ]
+        
+        def start_fade(w):
+            eff = w.graphicsEffect()
+            anim = QPropertyAnimation(eff, b"opacity")
+            anim.setDuration(400)
+            anim.setStartValue(0.0)
+            anim.setEndValue(1.0)
+            anim.setEasingCurve(QEasingCurve.OutCubic)
+            
+            # Prevent python from garbage collecting the animation instantly
+            if not hasattr(w, "_boot_anim"):
+                w._boot_anim = anim
+            anim.start()
+
+        for i, w in enumerate(targets):
+            eff = QGraphicsOpacityEffect(w)
+            eff.setOpacity(0.0)
+            w.setGraphicsEffect(eff)
+            QTimer.singleShot(150 + i * 50, lambda widget=w: (start_fade(widget)))
 
     def create_monitoring_page(self):
         monitoring_page = QWidget()
         body_layout = QHBoxLayout(monitoring_page)
-        body_layout.setContentsMargins(10, 10, 10, 10)
-        body_layout.setSpacing(12)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(8)
 
         self.map_widget = MapWidget()
         body_layout.addWidget(self.map_widget, 3)
@@ -279,10 +307,10 @@ class Dashboard(QWidget):
         right_container = QWidget()
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 4, 0)
-        right_layout.setSpacing(12)
+        right_layout.setSpacing(6)
 
         self.camera_panel = CameraPanel()
-        self.camera_panel.setMinimumHeight(390)
+        self.camera_panel.setMinimumHeight(280)
         right_layout.addWidget(self.camera_panel)
 
         self.alert_panel = AlertPanel()
@@ -435,6 +463,34 @@ class Dashboard(QWidget):
 
     def handle_tab_change(self, index):
         selected_widget = self.main_tabs.widget(index)
+        
+        # We also need to refresh the button state specifically if switched externally
+        theme = self.theme_manager.get_current_theme()
+        
+        for i, btn in enumerate(self.tab_buttons):
+            if i == index:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {self.theme['accent']}, stop:1 {self.theme['accent']}99);
+                    border-radius: 14px;
+                    color: #ffffff;
+                    font-weight: bold;
+                    padding: 0 16px;
+                """)
+            else:
+                btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        border-radius: 14px;
+                        color: {self.theme['text_secondary']};
+                        font-weight: bold;
+                        padding: 0 16px;
+                    }}
+                    QPushButton:hover {{
+                        color: {self.theme['text_primary']};
+                        background-color: {self.theme['surface_elevated']};
+                    }}
+                """)
 
         if selected_widget is self.analytics_page:
             self.analytics_panel.refresh_analytics()
@@ -446,6 +502,94 @@ class Dashboard(QWidget):
             self.settings_panel.set_active_mode(
                 self.data_source_manager.get_mode()
             )
+            
+    def set_active_tab(self, index):
+        self.main_tabs.setCurrentIndex(index)
+        self.handle_tab_change(index)
+
+    def apply_theme(self, theme, is_dark):
+        self.theme = theme
+        self.setStyleSheet(f"""
+            QWidget {{
+                background-color: {theme['background']};
+                color: {theme['text_primary']};
+                font-family: "Segoe UI";
+            }}
+            QScrollArea {{
+                border: none;
+                background-color: transparent;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: transparent;
+            }}
+            QScrollBar:vertical {{
+                background: transparent;
+                width: 8px;
+                margin: 0;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {theme['border']};
+                border-radius: 4px;
+                min-height: 20px;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+            QTabWidget::pane {{
+                border: none;
+                background: transparent;
+            }}
+        """)
+        
+        border_color = theme['border']
+        # Very subtle bottom border gradient via qlineargradient
+        self.header_frame.setStyleSheet(f"""
+            QFrame#headerFrame {{
+                background-color: {theme['surface']};
+                border-bottom: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 {theme['surface']}, stop:0.5 {theme['accent']}, stop:1 {theme['surface']});
+            }}
+        """)
+        
+        self.app_title.setStyleSheet(f"color: {theme['text_primary']}; font-size: 20px; font-weight: 600; font-family: 'Segoe UI'; background: transparent; border: none;")
+        self.status_dot.setStyleSheet(f"border-radius: 4px; background-color: {theme['success']}; border: none;")
+        
+        mode = self.data_source_manager.get_mode()
+        if mode == "simulation":
+            badge_bg = f"{theme['surface_elevated']}"
+            badge_c = f"{theme['text_muted']}"
+            badge_b = f"{theme['border']}"
+            self.live_badge.setText("SIM")
+        else:
+            badge_bg = f"{theme['success']}20"
+            badge_c = f"{theme['success']}"
+            badge_b = f"{theme['success']}80"
+            self.live_badge.setText("LIVE")
+            
+        self.live_badge.setStyleSheet(f"""
+            color: {badge_c};
+            background-color: {badge_bg};
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            border: 1px solid {badge_b};
+        """)
+        
+        self.theme_toggle_btn.setText("☀️" if is_dark else "🌙")
+        self.theme_toggle_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border-radius: 16px;
+                font-size: 16px;
+                border: none;
+                color: {theme['text_primary']};
+            }}
+            QPushButton:hover {{
+                background-color: {theme['surface_elevated']};
+            }}
+        """)
+        
+        # update tabs active colors
+        self.set_active_tab(self.main_tabs.currentIndex())
 
     def change_data_source_mode(self, mode):
         try:
