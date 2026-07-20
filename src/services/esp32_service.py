@@ -65,7 +65,7 @@ class ESP32Service:
             )
 
             self.socket.bind(
-                (self.host, self.port)
+                ("0.0.0.0", self.port)
             )
 
             self.socket.settimeout(1.0)

@@ -38,8 +38,10 @@
 
 from collections import deque
 from pathlib import Path
+import time
 
 from utils import data
+from database.database import save_pothole
 
 
 # --------------------------------------------------
@@ -136,6 +138,9 @@ class MLService:
             "bump": 0,
             "braking": 0,
         }
+        
+        # ----- DB Cooldown -----
+        self.last_db_save_time = 0.0
 
         # ----- Field detection -----
         # Set to "raw" or "processed" the first time a packet arrives.
@@ -461,6 +466,44 @@ class MLService:
         if prediction == "pothole":
             data.road_status = "POTHOLE"
             data.warning_level = "DANGER"
+            
+            # Cooldown logic for saving
+            current_time = time.time()
+            if current_time - self.last_db_save_time > 3.0:
+                self.last_db_save_time = current_time
+                
+                # Severity by confidence
+                if confidence >= 0.90:
+                    severity = "HIGH"
+                elif confidence >= 0.70:
+                    severity = "MEDIUM"
+                else:
+                    severity = "LOW"
+                    
+                # Setup pothole data
+                pothole_id = f"ML_{int(current_time * 1000)}"
+                depth = getattr(data, "depth", 0.0)
+                
+                data.current_pothole_id = pothole_id
+                data.current_pothole_depth = depth
+                data.current_pothole_severity = severity
+                
+                # Execute database save
+                save_pothole(
+                    pothole_id=pothole_id,
+                    x=0.0,
+                    y=0.0,
+                    depth=depth,
+                    severity=severity,
+                    latitude=getattr(data, "latitude", 0.0),
+                    longitude=getattr(data, "longitude", 0.0),
+                    photo_captured=False,
+                )
+                print(f"[ML] Pothole {pothole_id} saved to database.")
+                
+                # Signal map_widget to take screenshot asynchronously
+                data.ml_capture_requested = True
+                data.ml_capture_pothole_id = pothole_id
 
         elif prediction == "bump":
             data.road_status = "BUMP"

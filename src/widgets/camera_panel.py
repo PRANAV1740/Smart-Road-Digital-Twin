@@ -441,6 +441,9 @@ class CameraPanel(QWidget):
         super().__init__()
 
         self.setMinimumHeight(390)
+        
+        self.theme_manager = ThemeManager()
+        self.theme = self.theme_manager.get_current_theme()
 
         self.last_captured_pothole_id = None
 
@@ -485,17 +488,17 @@ class CameraPanel(QWidget):
 
         layout.setSpacing(8)
 
-        title = QLabel(
+        self.title_label = QLabel(
             "CAMERA PANEL"
         )
 
-        title.setAlignment(
+        self.title_label.setAlignment(
             Qt.AlignCenter
         )
 
-        title.setFixedHeight(48)
+        self.title_label.setFixedHeight(48)
 
-        title.setStyleSheet(
+        self.title_label.setStyleSheet(
             """
             font-size:22px;
             font-weight:bold;
@@ -529,7 +532,7 @@ class CameraPanel(QWidget):
         )
 
         layout.addWidget(
-            title
+            self.title_label
         )
 
         layout.addWidget(
@@ -572,10 +575,6 @@ class CameraPanel(QWidget):
             border: 1px solid {theme['border']};
             border-radius: 6px;
             padding: 8px;
-        """)
-        self.details_label.setStyleSheet(f"""
-            color: {theme['text_secondary']};
-            font-size: 12px;
         """)
 
     def check_snapshot(self):

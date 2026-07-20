@@ -113,6 +113,9 @@ ml_confidence = 0.0          # 0-100, how sure the model is
 ml_total_classified = 0      # how many windows classified so far
 ml_field_mode = "unknown"    # "raw" (ax/ay/az) or "processed" (jerk/pitch/roll)
 
+ml_capture_requested = False
+ml_capture_pothole_id = None
+
 ml_class_counts = {
     "smooth": 0,
     "pothole": 0,

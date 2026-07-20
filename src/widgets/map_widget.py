@@ -81,6 +81,27 @@ class MapWidget(QWidget):
 
     def on_animator_tick(self, timestamp):
         self.current_time = timestamp
+        
+        # Cross-thread snapshot for ML asynchronous captures
+        if getattr(data, "ml_capture_requested", False):
+            from PySide6.QtCore import QDateTime
+            from pathlib import Path
+            from database.database import update_pothole_image
+            
+            pothole_id = getattr(data, "ml_capture_pothole_id", None)
+            if pothole_id:
+                capture_folder = Path(__file__).resolve().parent.parent / "assets" / "captures"
+                capture_folder.mkdir(parents=True, exist_ok=True)
+                ts = QDateTime.currentDateTime().toString("yyyyMMdd_HHmmss_zzz")
+                image_path = capture_folder / f"pothole_ml_{pothole_id}_{ts}.png"
+                
+                pixmap = self.grab()
+                if pixmap.save(str(image_path), "PNG"):
+                    update_pothole_image(pothole_id, str(image_path))
+                    print(f"[Map] Photographed snapshot for {pothole_id}")
+            
+            data.ml_capture_requested = False
+            
         self.update()
 
     def apply_theme(self, theme, is_dark):
