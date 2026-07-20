@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from database.database import update_pothole_image
 from utils import data
+from utils.theme import ThemeManager
 
 
 class CameraView(QWidget):
@@ -40,6 +41,10 @@ class CameraView(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.theme_manager = ThemeManager()
+        self.theme = self.theme_manager.get_current_theme()
+        self.is_dark = self.theme_manager.is_dark
+        self.theme_manager.theme_changed.connect(self.apply_theme)
 
         self.scan_y = 0
         self.frame_count = 0
@@ -51,6 +56,11 @@ class CameraView(QWidget):
             self.update_frame
         )
         self.timer.start(80)
+
+    def apply_theme(self, theme, is_dark):
+        self.theme = theme
+        self.is_dark = is_dark
+        self.update()
 
     def update_frame(self):
         """
@@ -81,7 +91,7 @@ class CameraView(QWidget):
 
         painter.fillRect(
             self.rect(),
-            QColor("#090d12"),
+            QColor(self.theme["surface"]),
         )
 
         self.draw_road(
@@ -162,7 +172,7 @@ class CameraView(QWidget):
         )
 
         painter.setBrush(
-            QColor("#242a30")
+            QColor(self.theme["surface_elevated"])
         )
 
         painter.drawPolygon(
@@ -171,7 +181,7 @@ class CameraView(QWidget):
 
         painter.setPen(
             QPen(
-                QColor("#f7d477"),
+                QColor(self.theme["warning"]),
                 3,
                 Qt.DashLine,
             )
@@ -188,7 +198,7 @@ class CameraView(QWidget):
 
         painter.setPen(
             QPen(
-                QColor("#8a8f95"),
+                QColor(self.theme["border"]),
                 3,
             )
         )
@@ -230,7 +240,7 @@ class CameraView(QWidget):
         )
 
         painter.setPen(
-            QColor("#ff3333")
+            QColor(self.theme["danger"])
         )
 
         painter.drawText(
@@ -240,7 +250,7 @@ class CameraView(QWidget):
         )
 
         painter.setPen(
-            QColor("#dddddd")
+            QColor(self.theme["text_primary"])
         )
 
         painter.drawText(
@@ -305,7 +315,7 @@ class CameraView(QWidget):
 
         painter.setPen(
             QPen(
-                QColor("#ff3333"),
+                QColor(self.theme["danger"]),
                 3,
             )
         )
@@ -335,7 +345,7 @@ class CameraView(QWidget):
         )
 
         painter.setPen(
-            QColor("#ff3333")
+            QColor(self.theme["danger"])
         )
 
         painter.drawText(
@@ -531,6 +541,9 @@ class CameraPanel(QWidget):
             self.status_label
         )
 
+        self.theme_manager.theme_changed.connect(self.apply_theme)
+        self.apply_theme(self.theme_manager.get_current_theme(), self.theme_manager.is_dark)
+
         self.capture_timer = QTimer(self)
 
         self.capture_timer.timeout.connect(
@@ -538,6 +551,32 @@ class CameraPanel(QWidget):
         )
 
         self.capture_timer.start(250)
+
+    def apply_theme(self, theme, is_dark):
+        self.theme = theme
+        self.setStyleSheet(f"""
+            QWidget {{
+                background: {theme['surface']};
+                border-radius: 8px;
+            }}
+        """)
+        self.title_label.setStyleSheet(f"""
+            color: {theme['text_primary']};
+            font-size: 14px;
+            font-weight: bold;
+            padding: 8px;
+        """)
+        self.status_label.setStyleSheet(f"""
+            color: {theme['text_primary']};
+            background: {theme['surface_elevated']};
+            border: 1px solid {theme['border']};
+            border-radius: 6px;
+            padding: 8px;
+        """)
+        self.details_label.setStyleSheet(f"""
+            color: {theme['text_secondary']};
+            font-size: 12px;
+        """)
 
     def check_snapshot(self):
         """
@@ -624,7 +663,7 @@ class CameraPanel(QWidget):
         )
 
         pixmap.fill(
-            QColor("#090d12")
+            QColor(self.theme["surface"])
         )
 
         self.camera_view.render(
