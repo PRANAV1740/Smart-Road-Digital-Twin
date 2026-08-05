@@ -1,0 +1,4 @@
+id,pothole_id,x,y,depth,severity,latitude,longitude,photo_captured,image_path,detected_at
+4,3,90,280,11.0,HIGH,0.0,0.0,0,,2026-07-21 11:08:40
+3,2,680,440,6.0,MEDIUM,0.0,0.0,0,,2026-07-21 11:08:22
+1,1,420,90,9.0,HIGH,0.0,0.0,1,P:\Roadsense\src\assets\captures\pothole_1_20260721_105425_199.png,2026-07-21 10:48:37
