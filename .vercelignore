@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+ENV
+env
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+src/run_output.txt
+ml_training/*.csv
+ml_training/*.png
