@@ -38,10 +38,24 @@
 
 from collections import deque
 from pathlib import Path
+import sys
 import time
 
-from utils import data
-from database.database import save_pothole
+# Ensure src directory is in sys.path for robust internal package imports
+_src_dir = str(Path(__file__).resolve().parent.parent)
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+try:
+    from utils import data
+except ImportError:
+    from src.utils import data
+
+try:
+    from database.database import save_pothole
+except ImportError:
+    from src.database.database import save_pothole
+
 
 
 # --------------------------------------------------

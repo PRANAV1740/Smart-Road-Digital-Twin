@@ -1,10 +1,24 @@
 import json
 import socket
+import sys
 import threading
 import time
+from pathlib import Path
 
-from services.ml_service import MLService
-from utils import data
+_src_dir = str(Path(__file__).resolve().parent.parent)
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
+try:
+    from services.ml_service import MLService
+except ImportError:
+    from src.services.ml_service import MLService
+
+try:
+    from utils import data
+except ImportError:
+    from src.utils import data
+
 
 
 class ESP32Service:

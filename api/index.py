@@ -6,8 +6,22 @@ import json
 import random
 from pathlib import Path
 
+from flask import Flask, jsonify, request, render_template_string
+from flask_cors import CORS
+
 # --------------------------------------------------------------------------
-# Path & ML Service Setup
+# 1. Top-Level Flask WSGI Application
+# Created unconditionally at import time at module scope for Vercel
+# --------------------------------------------------------------------------
+app = Flask(__name__)
+CORS(app)
+
+# Explicit top-level entrypoint aliases for Vercel Python runtime static analyzer
+application = app
+handler = app
+
+# --------------------------------------------------------------------------
+# 2. Path Setup & Lazy ML Service Loader
 # --------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 SRC_DIR = BASE_DIR / "src"
@@ -16,17 +30,25 @@ if str(SRC_DIR) not in sys.path:
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-ml_service = None
-try:
-    from services.ml_service import MLService
-    api_model = Path(__file__).resolve().parent / "roadsense_model.joblib"
-    src_model = SRC_DIR / "roadsense_model.joblib"
-    model_path = api_model if api_model.exists() else src_model
-    
-    ml_service = MLService(model_path=str(model_path))
-    print(f"[Vercel ML] Loaded ML Service. Status: {ml_service.status_message}")
-except Exception as e:
-    print(f"[Vercel ML] Warning loading MLService: {e}")
+_ml_service_instance = None
+
+def get_ml_service():
+    """
+    Lazy loader for MLService to ensure importing api/index.py at build time
+    is instantaneous and never fails.
+    """
+    global _ml_service_instance
+    if _ml_service_instance is None:
+        try:
+            from src.services.ml_service import MLService
+            api_model = Path(__file__).resolve().parent / "roadsense_model.joblib"
+            src_model = SRC_DIR / "roadsense_model.joblib"
+            model_path = api_model if api_model.exists() else src_model
+            _ml_service_instance = MLService(model_path=str(model_path))
+        except Exception as e:
+            print(f"[Vercel ML] Warning loading MLService: {e}")
+            _ml_service_instance = False
+    return _ml_service_instance if _ml_service_instance else None
 
 # Simulated Telemetry State
 state = {
@@ -617,11 +639,12 @@ Content-Type: application/json<br><br>
 </html>"""
 
 def handle_prediction(data_json):
-    if ml_service and ml_service.is_ready():
+    ml_svc = get_ml_service()
+    if ml_svc and ml_svc.is_ready():
         samples = data_json.get("samples")
         if isinstance(samples, list) and len(samples) > 0:
             for sample in samples:
-                ml_service.feed_reading(
+                ml_svc.feed_reading(
                     sample.get("ax", sample.get("x", 0)),
                     sample.get("ay", sample.get("y", 0)),
                     sample.get("az", sample.get("z", 9.81))
@@ -631,8 +654,8 @@ def handle_prediction(data_json):
             ay = float(data_json.get("ay", data_json.get("y", -0.05)))
             az = float(data_json.get("az", data_json.get("z", 9.81)))
             
-            for _ in range(ml_service.window_size):
-                ml_service.feed_reading(
+            for _ in range(ml_svc.window_size):
+                ml_svc.feed_reading(
                     ax + random.uniform(-0.02, 0.02),
                     ay + random.uniform(-0.02, 0.02),
                     az + random.uniform(-0.1, 0.1)
@@ -640,8 +663,8 @@ def handle_prediction(data_json):
         
         return {
             "success": True,
-            "prediction": ml_service.last_prediction,
-            "confidence": round(ml_service.last_confidence, 2),
+            "prediction": ml_svc.last_prediction,
+            "confidence": round(ml_svc.last_confidence, 2),
             "mode": "ML_MODEL",
             "timestamp": time.time()
         }
@@ -672,108 +695,49 @@ def handle_prediction(data_json):
     }
 
 # --------------------------------------------------------------------------
-# Top-level Web Server Initialization
-# Guarantees app, application, and handler exist at module scope unconditionally
+# Flask Route Definitions
 # --------------------------------------------------------------------------
-try:
-    from flask import Flask, jsonify, request, render_template_string
-    from flask_cors import CORS
+@app.route("/")
+def index():
+    return render_template_string(HTML_TEMPLATE)
 
-    app = Flask(__name__)
-    CORS(app)
+@app.route("/api/status", methods=["GET"])
+def get_status():
+    ml_svc = get_ml_service()
+    ready = ml_svc.is_ready() if ml_svc else False
+    msg = ml_svc.status_message if ml_svc else "ML service loaded lazily"
+    classes = list(ml_svc.model.classes_) if (ml_svc and ml_svc.model) else ["braking", "bump", "pothole", "smooth"]
+    return jsonify({
+        "status": "online",
+        "service": "RoadSense ML Digital Twin",
+        "ml_ready": ready,
+        "message": msg,
+        "classes": classes,
+        "timestamp": time.time()
+    })
 
-    @app.route("/")
-    def index():
-        return render_template_string(HTML_TEMPLATE)
+@app.route("/api/telemetry", methods=["GET"])
+def get_telemetry():
+    return jsonify(state)
 
-    @app.route("/api/status", methods=["GET"])
-    def get_status():
-        ready = ml_service.is_ready() if ml_service else False
-        msg = ml_service.status_message if ml_service else "ML service not initialized"
-        classes = list(ml_service.model.classes_) if (ml_service and ml_service.model) else ["braking", "bump", "pothole", "smooth"]
-        return jsonify({
-            "status": "online",
-            "service": "RoadSense ML Digital Twin",
-            "ml_ready": ready,
-            "message": msg,
-            "classes": classes,
-            "timestamp": time.time()
-        })
+@app.route("/api/predict", methods=["POST"])
+def predict():
+    try:
+        data_json = request.get_json(force=True) or {}
+        res = handle_prediction(data_json)
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
 
-    @app.route("/api/telemetry", methods=["GET"])
-    def get_telemetry():
-        return jsonify(state)
-
-    @app.route("/api/predict", methods=["POST"])
-    def predict():
-        try:
-            data_json = request.get_json(force=True) or {}
-            res = handle_prediction(data_json)
-            return jsonify(res)
-        except Exception as e:
-            return jsonify({"success": False, "error": str(e)}), 400
-
-    @app.route("/api/history", methods=["GET"])
-    def get_history():
-        return jsonify({
-            "events": [
-                {"id": 101, "type": "pothole", "confidence": 98.2, "lat": 12.9730, "lng": 77.5960, "time": "13:42:10"},
-                {"id": 102, "type": "bump", "confidence": 92.5, "lat": 12.9705, "lng": 77.5925, "time": "13:45:22"},
-                {"id": 103, "type": "pothole", "confidence": 95.7, "lat": 12.9745, "lng": 77.5980, "time": "13:49:05"}
-            ]
-        })
-
-except ImportError:
-    # Standard WSGI fallback if Flask is not installed in local python environment
-    def fallback_app(environ, start_response):
-        path = environ.get('PATH_INFO', '/')
-        method = environ.get('REQUEST_METHOD', 'GET')
-        
-        if path == '/' or path == '/index.html':
-            start_response('200 OK', [('Content-Type', 'text/html; charset=utf-8')])
-            return [HTML_TEMPLATE.encode('utf-8')]
-            
-        elif path == '/api/status':
-            start_response('200 OK', [('Content-Type', 'application/json')])
-            body = json.dumps({
-                "status": "online",
-                "service": "RoadSense ML Digital Twin",
-                "ml_ready": ml_service.is_ready() if ml_service else False,
-                "timestamp": time.time()
-            })
-            return [body.encode('utf-8')]
-            
-        elif path == '/api/telemetry':
-            start_response('200 OK', [('Content-Type', 'application/json')])
-            return [json.dumps(state).encode('utf-8')]
-            
-        elif path == '/api/predict' and method == 'POST':
-            try:
-                request_body_size = int(environ.get('CONTENT_LENGTH', 0))
-                request_body = environ['wsgi.input'].read(request_body_size)
-                data_json = json.loads(request_body) if request_body else {}
-                res = handle_prediction(data_json)
-                start_response('200 OK', [('Content-Type', 'application/json')])
-                return [json.dumps(res).encode('utf-8')]
-            except Exception as e:
-                start_response('400 Bad Request', [('Content-Type', 'application/json')])
-                return [json.dumps({"success": False, "error": str(e)}).encode('utf-8')]
-                
-        else:
-            start_response('404 Not Found', [('Content-Type', 'application/json')])
-            return [json.dumps({"error": "Not Found"}).encode('utf-8')]
-
-    app = fallback_app
-
-# Unconditional top-level assignments for Vercel static AST parser
-application = app
-handler = app
+@app.route("/api/history", methods=["GET"])
+def get_history():
+    return jsonify({
+        "events": [
+            {"id": 101, "type": "pothole", "confidence": 98.2, "lat": 12.9730, "lng": 77.5960, "time": "13:42:10"},
+            {"id": 102, "type": "bump", "confidence": 92.5, "lat": 12.9705, "lng": 77.5925, "time": "13:45:22"},
+            {"id": 103, "type": "pothole", "confidence": 95.7, "lat": 12.9745, "lng": 77.5980, "time": "13:49:05"}
+        ]
+    })
 
 if __name__ == "__main__":
-    if hasattr(app, 'run'):
-        app.run(host="0.0.0.0", port=3000, debug=True)
-    else:
-        from wsgiref.simple_server import make_server
-        httpd = make_server('0.0.0.0', 3000, app)
-        print("Serving on http://0.0.0.0:3000 ...")
-        httpd.serve_forever()
+    app.run(host="0.0.0.0", port=3000, debug=True)
