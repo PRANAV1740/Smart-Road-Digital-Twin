@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 
 
+import tempfile
+
 DATABASE_FOLDER = Path(__file__).resolve().parent
 DATABASE_PATH = DATABASE_FOLDER / "smart_road.db"
 EXPORT_FOLDER = DATABASE_FOLDER / "exports"
@@ -15,22 +17,28 @@ EXPORT_FOLDER = DATABASE_FOLDER / "exports"
 DATABASE_TIMEOUT = 10
 
 
+def get_db_path():
+    """Return database path, falling back to tempdir on read-only filesystems."""
+    try:
+        DATABASE_FOLDER.mkdir(parents=True, exist_ok=True)
+        return DATABASE_PATH
+    except Exception:
+        return Path(tempfile.gettempdir()) / "smart_road.db"
+
+
 def get_connection():
     """
     Create and return a configured SQLite connection.
     """
-
-    DATABASE_FOLDER.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    db_path = get_db_path()
 
     connection = sqlite3.connect(
-        DATABASE_PATH,
+        db_path,
         timeout=DATABASE_TIMEOUT,
     )
 
     return connection
+
 
 
 def create_database():

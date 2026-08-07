@@ -6,7 +6,9 @@ import json
 import random
 from pathlib import Path
 
-# Add parent and src directories to sys.path
+# --------------------------------------------------------------------------
+# Path & ML Service Setup
+# --------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 SRC_DIR = BASE_DIR / "src"
 if str(SRC_DIR) not in sys.path:
@@ -14,7 +16,6 @@ if str(SRC_DIR) not in sys.path:
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-# Try importing MLService
 ml_service = None
 try:
     from services.ml_service import MLService
@@ -670,7 +671,10 @@ def handle_prediction(data_json):
         "timestamp": time.time()
     }
 
-# Try importing Flask
+# --------------------------------------------------------------------------
+# Top-level Web Server Initialization
+# Guarantees app, application, and handler exist at module scope unconditionally
+# --------------------------------------------------------------------------
 try:
     from flask import Flask, jsonify, request, render_template_string
     from flask_cors import CORS
@@ -720,8 +724,8 @@ try:
         })
 
 except ImportError:
-    # Pure WSGI Fallback if Flask is not installed in local environment
-    def app(environ, start_response):
+    # Standard WSGI fallback if Flask is not installed in local python environment
+    def fallback_app(environ, start_response):
         path = environ.get('PATH_INFO', '/')
         method = environ.get('REQUEST_METHOD', 'GET')
         
@@ -759,8 +763,14 @@ except ImportError:
             start_response('404 Not Found', [('Content-Type', 'application/json')])
             return [json.dumps({"error": "Not Found"}).encode('utf-8')]
 
+    app = fallback_app
+
+# Unconditional top-level assignments for Vercel static AST parser
+application = app
+handler = app
+
 if __name__ == "__main__":
-    if 'Flask' in sys.modules:
+    if hasattr(app, 'run'):
         app.run(host="0.0.0.0", port=3000, debug=True)
     else:
         from wsgiref.simple_server import make_server
