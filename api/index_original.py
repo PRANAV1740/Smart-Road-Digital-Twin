@@ -17,7 +17,7 @@ if str(BASE_DIR) not in sys.path:
 # Try importing MLService
 ml_service = None
 try:
-    from src.services.ml_service import MLService
+    from services.ml_service import MLService
     api_model = Path(__file__).resolve().parent / "roadsense_model.joblib"
     src_model = SRC_DIR / "roadsense_model.joblib"
     model_path = api_model if api_model.exists() else src_model
@@ -677,8 +677,6 @@ try:
 
     app = Flask(__name__)
     CORS(app)
-    application = app
-    handler = app
 
     @app.route("/")
     def index():
